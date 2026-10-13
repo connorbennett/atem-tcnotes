@@ -21,6 +21,8 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     var sequenceStart = "00:00:00:00" { didSet { saveSettings() } }
     var oscEnabled = true { didSet { saveSettings(); restartOSC() } }
     var oscPort = 9300 { didSet { saveSettings(); restartOSC() } }
+    var apiEnabled = true { didSet { saveSettings(); restartAPI() } }
+    var apiPort = 9301 { didSet { saveSettings(); restartAPI() } }
     var atemAddress = "" { didSet { saveSettings() } }
     var atemAutoConnect = false { didSet { saveSettings() } }
     var atemFollowsProjectName = true { didSet { saveSettings() } }
@@ -46,6 +48,7 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     private(set) var ntpStatus = "Not synced — using this Mac's clock"
     private(set) var oscStatus = "Off"
     private(set) var oscLastMessage = ""
+    private(set) var apiStatus = "Off"
     private(set) var atemState: ATEMState = .disconnected
     private(set) var atemProjectName: String?
     var recordingHotkeyFor: Shortcut.ID?
@@ -55,6 +58,7 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     @ObservationIgnored private var isLoading = true
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let oscServer = OSCServer()
+    @ObservationIgnored private let apiServer = APIServer()
     @ObservationIgnored private let atem = ATEMBridge()
     @ObservationIgnored private var atemReference: (timecode: Timecode, uptime: TimeInterval)?
     @ObservationIgnored private var atemVideoMode: (timebase: Int, ntsc: Bool)?
@@ -69,9 +73,13 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
         loadSettings()
         loadSession()
         isLoading = false
+        // Default shortcuts get fresh IDs each time they're generated; save them once so the IDs
+        // Companion buttons refer to stay stable across launches.
+        if defaults.data(forKey: "shortcuts") == nil { saveSettings() }
 
         atem.delegate = self
         restartOSC()
+        restartAPI()
         startNTPSync()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
@@ -281,8 +289,9 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
         oscLastMessage = "\(message.address) → \(outcome)"
     }
 
-    /// Matches a 1-based position first, then a label (case-insensitive).
+    /// Matches a shortcut's ID, then a 1-based position, then a label (case-insensitive).
     private func shortcut(matching key: String) -> Shortcut? {
+        if let id = UUID(uuidString: key), let shortcut = shortcuts.first(where: { $0.id == id }) { return shortcut }
         if let index = Int(key), shortcuts.indices.contains(index - 1) { return shortcuts[index - 1] }
         return shortcuts.first { $0.label.caseInsensitiveCompare(key) == .orderedSame }
     }
@@ -290,6 +299,51 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     func oscAddress(for shortcut: Shortcut) -> String {
         let label = shortcut.label.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? shortcut.label
         return "/editnotes/shortcut/\(label)"
+    }
+
+    // MARK: Companion API
+
+    private func restartAPI() {
+        guard !isLoading else { return }
+        apiServer.stop()
+        guard apiEnabled else {
+            apiStatus = "Off"
+            return
+        }
+        guard let port = UInt16(exactly: apiPort), port > 0 else {
+            apiStatus = "Invalid port \(apiPort)"
+            return
+        }
+        do {
+            try apiServer.start(port: port) { [weak self] in
+                await self?.apiStateJSON() ?? Data("{}".utf8)
+            } onFailure: { [weak self] message in
+                Task { @MainActor [weak self] in self?.apiStatus = "Can't listen on TCP \(port): \(message)" }
+            }
+            apiStatus = "Listening on TCP \(port)"
+        } catch {
+            apiStatus = "Can't listen on TCP \(port): \(error.localizedDescription)"
+        }
+    }
+
+    /// What the Companion module needs to build its buttons and send triggers back over OSC.
+    private func apiStateJSON() -> Data {
+        let state: [String: Any] = [
+            "app": "EditNotes",
+            "projectName": projectName,
+            "oscPort": oscEnabled ? oscPort : 0,
+            "shortcuts": shortcuts.enumerated().map { index, shortcut in
+                [
+                    "id": shortcut.id.uuidString,
+                    "index": index + 1,
+                    "label": shortcut.label,
+                    "text": shortcut.text,
+                    "color": shortcut.color.rawValue,
+                    "rgb": [shortcut.color.rgb.r, shortcut.color.rgb.g, shortcut.color.rgb.b],
+                ] as [String: Any]
+            },
+        ]
+        return (try? JSONSerialization.data(withJSONObject: state)) ?? Data("{}".utf8)
     }
 
     // MARK: ATEM
@@ -410,6 +464,8 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
         sequenceStart = defaults.string(forKey: "sequenceStart") ?? sequenceStart
         oscEnabled = defaults.object(forKey: "oscEnabled") as? Bool ?? oscEnabled
         oscPort = defaults.object(forKey: "oscPort") as? Int ?? oscPort
+        apiEnabled = defaults.object(forKey: "apiEnabled") as? Bool ?? apiEnabled
+        apiPort = defaults.object(forKey: "apiPort") as? Int ?? apiPort
         atemAddress = defaults.string(forKey: "atemAddress") ?? atemAddress
         atemAutoConnect = defaults.bool(forKey: "atemAutoConnect")
         atemFollowsProjectName = defaults.object(forKey: "atemFollowsProjectName") as? Bool ?? atemFollowsProjectName
@@ -427,6 +483,8 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
         defaults.set(sequenceStart, forKey: "sequenceStart")
         defaults.set(oscEnabled, forKey: "oscEnabled")
         defaults.set(oscPort, forKey: "oscPort")
+        defaults.set(apiEnabled, forKey: "apiEnabled")
+        defaults.set(apiPort, forKey: "apiPort")
         defaults.set(atemAddress, forKey: "atemAddress")
         defaults.set(atemAutoConnect, forKey: "atemAutoConnect")
         defaults.set(atemFollowsProjectName, forKey: "atemFollowsProjectName")

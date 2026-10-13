@@ -3,10 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
-            Tab("Timecode", systemImage: "clock") { TimecodeSettings() }
-            Tab("Shortcuts", systemImage: "keyboard") { ShortcutSettings() }
-            Tab("OSC", systemImage: "dot.radiowaves.left.and.right") { OSCSettings() }
-            Tab("ATEM", systemImage: "rectangle.3.group") { ATEMSettings() }
+            TimecodeSettings().tabItem { Label("Timecode", systemImage: "clock") }
+            ShortcutSettings().tabItem { Label("Shortcuts", systemImage: "keyboard") }
+            OSCSettings().tabItem { Label("OSC", systemImage: "dot.radiowaves.left.and.right") }
+            ATEMSettings().tabItem { Label("ATEM", systemImage: "rectangle.3.group") }
         }
         .frame(width: 680, height: 460)
     }
@@ -59,8 +59,11 @@ private struct ShortcutSettings: View {
         VStack(alignment: .leading, spacing: 0) {
             List {
                 ForEach($model.shortcuts) { $shortcut in
+                    // Read the ID up front: reading it through the binding while `shortcuts` is being
+                    // mutated is an overlapping access, which crashes.
+                    let id = shortcut.id
                     HStack(spacing: 10) {
-                        Text("\((model.shortcuts.firstIndex { $0.id == shortcut.id } ?? 0) + 1)")
+                        Text("\((model.shortcuts.firstIndex { $0.id == id } ?? 0) + 1)")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .frame(width: 18, alignment: .trailing)
@@ -76,7 +79,7 @@ private struct ShortcutSettings: View {
                             .frame(width: 170, alignment: .leading)
                             .lineLimit(1)
                         Button("Remove", systemImage: "minus.circle") {
-                            model.shortcuts.removeAll { $0.id == shortcut.id }
+                            model.shortcuts.removeAll { $0.id == id }
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)
@@ -140,7 +143,10 @@ private struct OSCSettings: View {
                 AddressRow("/editnotes/undo", "Remove the most recently added marker")
             }
             Section("Bitfocus Companion") {
-                Text("Install the module in this project's Companion folder, or use Companion's built-in Generic OSC connection pointed at this Mac on the port above and send the addresses listed here.")
+                Toggle("Share shortcuts with the Companion module", isOn: $model.apiEnabled)
+                TextField("Module port (TCP)", value: $model.apiPort, format: .number.grouping(.never))
+                LabeledContent("Status", value: model.apiStatus)
+                Text("The EditNotes module in this project's Companion folder reads your shortcuts from this port and creates a button for each one. Triggers come back over OSC.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

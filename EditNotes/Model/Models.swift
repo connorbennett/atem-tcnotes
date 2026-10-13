@@ -25,8 +25,16 @@ enum MarkerColor: String, Codable, CaseIterable, Identifiable {
         Color(red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255)
     }
 
-    /// Premiere's `pproColor` is a packed ABGR integer.
-    var pproColor: UInt32 { 0xFF00_0000 | rgb.b << 16 | rgb.g << 8 | rgb.r }
+    /// Premiere's `pproColor` is a packed ABGR integer. Where editingtools.io's exports use a specific
+    /// value for a colour, that exact value is used so Premiere treats the markers the same way.
+    var pproColor: UInt32 {
+        switch self {
+        case .blue: 4_294_741_314
+        case .red: 4_281_740_498
+        case .cyan: 4_292_277_273
+        default: 0xFF00_0000 | rgb.b << 16 | rgb.g << 8 | rgb.r
+        }
+    }
 }
 
 struct Note: Identifiable, Codable, Equatable {
