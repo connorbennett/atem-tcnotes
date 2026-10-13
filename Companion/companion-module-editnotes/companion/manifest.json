@@ -1,0 +1,21 @@
+{
+  "id": "editnotes",
+  "name": "editnotes",
+  "shortname": "EditNotes",
+  "description": "Drop timecode markers in EditNotes over OSC",
+  "version": "1.0.0",
+  "license": "MIT",
+  "repository": "",
+  "bugs": "",
+  "maintainers": [{ "name": "Connor Bennett", "email": "" }],
+  "runtime": {
+    "type": "node22",
+    "api": "nodejs-ipc",
+    "apiVersion": "0.0.0",
+    "entrypoint": "../main.js"
+  },
+  "legacyIds": [],
+  "manufacturer": "EditNotes",
+  "products": ["EditNotes"],
+  "keywords": ["timecode", "markers", "logging", "osc"]
+}
