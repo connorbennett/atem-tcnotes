@@ -37,9 +37,27 @@ struct ContentView: View {
         } message: {
             Text("This removes every note in the current session. Export first if you need them.")
         }
+        .alert("The ATEM project has changed", isPresented: atemProjectPromptShown) {
+            Button("Export and Start New Project") {
+                // Let the alert finish closing before the save panel opens.
+                DispatchQueue.main.async { model.exportAndStartATEMProject() }
+            }
+                .keyboardShortcut(.defaultAction)
+            Button("Keep Markers", role: .cancel) { model.keepNotesForATEMProject() }
+        } message: {
+            Text("The switcher is now recording “\(model.pendingATEMProjectName ?? "")”. Export the \(model.notes.count) markers from “\(model.projectName)” as Premiere Pro XML and start the new project with an empty list?")
+        }
         .defaultFocus($entryFocused, true)
         .onAppear { DispatchQueue.main.async { focusEntry() } }
         .onChange(of: model.focusRequest) { focusEntry() }
+    }
+
+    private var atemProjectPromptShown: Binding<Bool> {
+        Binding {
+            model.pendingATEMProjectName != nil
+        } set: { _ in
+            // The alert's buttons resolve the prompt; SwiftUI may clear this before their actions run.
+        }
     }
 
     /// Focuses the note field with the cursor at the end, rather than AppKit's default select-all.

@@ -53,6 +53,9 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     private(set) var atemProjectName: String?
     var recordingHotkeyFor: Shortcut.ID?
     var confirmingNewSession = false
+    /// A new project name reported by the ATEM while notes from the current project are still in the list.
+    /// The main window asks whether to export and start over before switching to it.
+    var pendingATEMProjectName: String?
 
     @ObservationIgnored weak var mainWindow: NSWindow?
     @ObservationIgnored private var isLoading = true
@@ -64,6 +67,7 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
     @ObservationIgnored private var atemVideoMode: (timebase: Int, ntsc: Bool)?
     @ObservationIgnored private var atemWanted = false
     @ObservationIgnored private var atemPollTimer: Timer?
+    @ObservationIgnored private var atemProjectNameWork: DispatchWorkItem?
     @ObservationIgnored private var ntpTask: Task<Void, Never>?
     @ObservationIgnored private var saveWork: DispatchWorkItem?
     @ObservationIgnored private var keyMonitor: Any?
@@ -169,18 +173,41 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
         if !(atemFollowsProjectName && atemProjectName != nil) { projectName = "Untitled" }
     }
 
-    func exportPremiereXML() {
+    /// Returns false if the user cancelled the save panel or the file couldn't be written.
+    @discardableResult
+    func exportPremiereXML() -> Bool {
         let start = Timecode(string: sequenceStart, rate: frameRate) ?? Timecode(frameCount: 0, rate: frameRate)
         let xml = PremiereXML.make(projectName: projectName, notes: notes, rate: frameRate, sequenceStart: start)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.xml]
         panel.nameFieldStringValue = "\(projectName) Markers.xml"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
         do {
             try xml.write(to: url, atomically: true, encoding: .utf8)
+            return true
         } catch {
             NSAlert(error: error).runModal()
+            return false
         }
+    }
+
+    /// Exports the current notes under the old project name, then clears them and switches to the ATEM's
+    /// new project. If the export is cancelled or fails, the notes are kept.
+    func exportAndStartATEMProject() {
+        guard let name = pendingATEMProjectName else { return }
+        pendingATEMProjectName = nil
+        if exportPremiereXML() {
+            notes = []
+            draft = ""
+        }
+        projectName = name
+    }
+
+    /// Keeps the current notes and carries on under the ATEM's new project name.
+    func keepNotesForATEMProject() {
+        guard let name = pendingATEMProjectName else { return }
+        pendingATEMProjectName = nil
+        projectName = name
     }
 
     // MARK: Keyboard
@@ -410,7 +437,25 @@ final class AppModel: NSObject, ATEMBridgeDelegate {
 
     func atemBridgeProjectNameDidChange(_ name: String?) {
         atemProjectName = name
-        if atemFollowsProjectName, let name { projectName = name }
+        // Wait for the name to settle so a rename in progress on the switcher doesn't prompt per keystroke.
+        atemProjectNameWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyATEMProjectName(name) }
+        atemProjectNameWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    private func applyATEMProjectName(_ name: String?) {
+        guard atemFollowsProjectName, let name, name != projectName else {
+            // Changed back to the current project while the prompt was up: nothing to ask any more.
+            if name == projectName { pendingATEMProjectName = nil }
+            return
+        }
+        if notes.isEmpty {
+            projectName = name
+        } else {
+            pendingATEMProjectName = name
+            NSApp.requestUserAttention(.criticalRequest)
+        }
     }
 
     func atemBridgeVideoModeDidChange(withTimebase timebase: Int, ntsc: Bool) {
